@@ -1,8 +1,24 @@
-﻿@{
+﻿@inject IAuthenticationSchemeProvider Schemes
+@using Microsoft.AspNetCore.Authentication
+@{
     ViewData["Title"] = "Home Page";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://docs.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="row p-3">
+    <div class="col-12">
+        @if (User.Identity.IsAuthenticated)
+        {
+            <h2>Authenticated!</h2>
+            <ul>
+                @foreach (var claim in User.Claims)
+                {
+                    <li><strong>@claim.Type:</strong> @claim.Value</li>
+                }
+            </ul>
+        }
+        else
+        {
+            <h2>Unauthenticated</h2>
+        }
+    </div>
 </div>

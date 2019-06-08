@@ -20,6 +20,7 @@ namespace ScottBrady91.SignInWithApple.Example
         public void ConfigureServices(IServiceCollection services)
         {
             IdentityModelEventSource.ShowPII = true;
+            JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
             services.AddMvc().SetCompatibilityVersion(CompatibilityVersion.Version_2_2);
 
