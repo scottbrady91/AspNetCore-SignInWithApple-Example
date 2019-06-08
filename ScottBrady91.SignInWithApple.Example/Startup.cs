@@ -7,7 +7,6 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Logging;
@@ -32,42 +31,39 @@ namespace ScottBrady91.SignInWithApple.Example
                 .AddCookie("cookie")
                 .AddOpenIdConnect("apple", async options =>
                 {
+                    options.ResponseType = "code";
+                    options.SignInScheme = "cookie";
+                    options.DisableTelemetry = true;
+                    options.Scope.Clear(); // otherwise I had consent request issues
+
                     options.Configuration = new OpenIdConnectConfiguration
                     {
                         AuthorizationEndpoint = "https://appleid.apple.com/auth/authorize",
                         TokenEndpoint = "https://appleid.apple.com/auth/token",
-                        JwksUri = "https://appleid.apple.com/auth/keys"
                     };
-                    
+
                     options.ClientId = "com.scottbrady91.authdemo.service"; // Service ID
                     options.CallbackPath = "/signin-apple"; // corresponding to our redirect URI
-                    options.ResponseType = "code";
-                    options.SignInScheme = "cookie";
-
-                    options.Scope.Clear();
-                    //options.Scope.Add("openid");
-
-                    options.DisableTelemetry = true;
-
+                    
                     options.Events.OnAuthorizationCodeReceived = context =>
                     {
                         context.TokenEndpointRequest.ClientSecret = TokenGenerator.CreateNewToken();
                         return Task.CompletedTask;
                     };
 
-                    options.Events.OnTokenResponseReceived = context => Task.CompletedTask;
-
+                    // Expected identity token iss value
                     options.TokenValidationParameters.ValidIssuer = "https://appleid.apple.com";
 
+                    // Expected identity token signing key
                     var jwks = await new HttpClient().GetStringAsync("https://appleid.apple.com/auth/keys");
                     options.TokenValidationParameters.IssuerSigningKey = new JsonWebKeySet(jwks).Keys.FirstOrDefault();
 
+                    // Disable nonce validation (not supported by Apple)
                     options.ProtocolValidator.RequireNonce = false;
                 });
         }
 
-        // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        public void Configure(IApplicationBuilder app, IHostingEnvironment env)
+        public void Configure(IApplicationBuilder app)
         {
             app.UseDeveloperExceptionPage();
 
@@ -82,7 +78,6 @@ namespace ScottBrady91.SignInWithApple.Example
     {
         public static string CreateNewToken()
         {
-            const string kid = "9S72H84ACK"; // from viewing the details of the key we generated using the dev portal
             const string iss = "62QM29578N"; // your accounts team ID found in the dev portal
             const string aud = "https://appleid.apple.com";
             const string sub = "com.scottbrady91.authdemo.service"; // same as client_id
@@ -99,8 +94,6 @@ namespace ScottBrady91.SignInWithApple.Example
                 issuedAt: DateTime.UtcNow,
                 notBefore: DateTime.UtcNow,
                 signingCredentials: new SigningCredentials(new ECDsaSecurityKey(new ECDsaCng(cngKey)), SecurityAlgorithms.EcdsaSha256));
-
-            // TODO: kid missing from header?
 
             return handler.WriteToken(token);
         }
