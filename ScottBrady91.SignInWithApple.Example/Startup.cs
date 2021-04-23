@@ -1,16 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
-using System.Net.Http;
-using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Logging;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 
 namespace ScottBrady91.SignInWithApple.Example
@@ -20,9 +15,8 @@ namespace ScottBrady91.SignInWithApple.Example
         public void ConfigureServices(IServiceCollection services)
         {
             IdentityModelEventSource.ShowPII = true;
-            JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
-            services.AddMvc().SetCompatibilityVersion(CompatibilityVersion.Version_2_2);
+            services.AddControllersWithViews();
 
             services.AddAuthentication(options =>
                 {
@@ -30,37 +24,30 @@ namespace ScottBrady91.SignInWithApple.Example
                     options.DefaultChallengeScheme = "apple";
                 })
                 .AddCookie("cookie")
-                .AddOpenIdConnect("apple", async options =>
+                .AddOpenIdConnect("apple", options =>
                 {
-                    options.ResponseType = "code";
-                    options.SignInScheme = "cookie";
-                    options.DisableTelemetry = true;
-                    options.Scope.Clear(); // otherwise I had consent request issues
-
-                    options.Configuration = new OpenIdConnectConfiguration
-                    {
-                        AuthorizationEndpoint = "https://appleid.apple.com/auth/authorize",
-                        TokenEndpoint = "https://appleid.apple.com/auth/token",
-                    };
+                    options.Authority = "https://appleid.apple.com"; // disco doc: https://appleid.apple.com/.well-known/openid-configuration
 
                     options.ClientId = "com.scottbrady91.authdemo.service"; // Service ID
-                    options.CallbackPath = "/signin-apple"; // corresponding to our redirect URI
-                    
+                    options.CallbackPath = "/signin-apple"; // corresponding to your redirect URI
+
+                    options.ResponseType = "code id_token"; // hybrid flow due to lack of PKCE support
+                    options.SignInScheme = "cookie";
+                    options.DisableTelemetry = true;
+
+                    options.Scope.Clear(); // apple does not support the profile scope
+                    options.Scope.Add("openid");
+                    options.Scope.Add("email");
+                    options.Scope.Add("name");
+
+                    // custom client secret generation - secret can be re-used for up to 6 months
                     options.Events.OnAuthorizationCodeReceived = context =>
                     {
                         context.TokenEndpointRequest.ClientSecret = TokenGenerator.CreateNewToken();
                         return Task.CompletedTask;
                     };
 
-                    // Expected identity token iss value
-                    options.TokenValidationParameters.ValidIssuer = "https://appleid.apple.com";
-
-                    // Expected identity token signing key
-                    var jwks = await new HttpClient().GetStringAsync("https://appleid.apple.com/auth/keys");
-                    options.TokenValidationParameters.IssuerSigningKey = new JsonWebKeySet(jwks).Keys.FirstOrDefault();
-
-                    // Disable nonce validation (not supported by Apple)
-                    options.ProtocolValidator.RequireNonce = false;
+                    options.UsePkce = false; // apple does not currently support PKCE (April 2021)
                 });
         }
 
@@ -68,10 +55,15 @@ namespace ScottBrady91.SignInWithApple.Example
         {
             app.UseDeveloperExceptionPage();
 
-            app.UseAuthentication();
-            
+            app.UseHttpsRedirection();
             app.UseStaticFiles();
-            app.UseMvcWithDefaultRoute();
+            
+            app.UseRouting();
+
+            app.UseAuthentication();
+            app.UseAuthorization();
+
+            app.UseEndpoints(e => e.MapDefaultControllerRoute());
         }
     }
 
@@ -82,21 +74,23 @@ namespace ScottBrady91.SignInWithApple.Example
             const string iss = "62QM29578N"; // your accounts team ID found in the dev portal
             const string aud = "https://appleid.apple.com";
             const string sub = "com.scottbrady91.authdemo.service"; // same as client_id
+            var now = DateTime.UtcNow;
             
             const string privateKey = "MIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQgnbfHJQO9feC7yKOenScNctvHUP+Hp3AdOKnjUC3Ee9GgCgYIKoZIzj0DAQehRANCAATMgckuqQ1MhKALhLT/CA9lZrLA+VqTW/iIJ9GKimtC2GP02hCc5Vac8WuN6YjynF3JPWKTYjg2zqex5Sdn9Wj+";
-            var cngKey = CngKey.Import(Convert.FromBase64String(privateKey), CngKeyBlobFormat.Pkcs8PrivateBlob);
-            
-            var handler = new JwtSecurityTokenHandler();
-            var token = handler.CreateJwtSecurityToken(
-                issuer: iss,
-                audience: aud,
-                subject: new ClaimsIdentity(new List<Claim> { new Claim("sub", sub) }),
-                expires: DateTime.UtcNow.AddMinutes(5), // expiry can be a maximum of 6 months => generate one per request, or one and then re-use until expiration
-                issuedAt: DateTime.UtcNow,
-                notBefore: DateTime.UtcNow,
-                signingCredentials: new SigningCredentials(new ECDsaSecurityKey(new ECDsaCng(cngKey)), SecurityAlgorithms.EcdsaSha256));
+            var ecdsa = ECDsa.Create();
+            ecdsa?.ImportPkcs8PrivateKey(Convert.FromBase64String(privateKey), out _);
 
-            return handler.WriteToken(token);
+            var handler = new JsonWebTokenHandler();
+            return handler.CreateToken(new SecurityTokenDescriptor
+            {
+                Issuer = iss,
+                Audience = aud,
+                Claims = new Dictionary<string, object> {{"sub", sub}},
+                Expires = now.AddMinutes(5), // expiry can be a maximum of 6 months - generate one per request or re-use until expiration
+                IssuedAt = now,
+                NotBefore = now,
+                SigningCredentials = new SigningCredentials(new ECDsaSecurityKey(ecdsa), SecurityAlgorithms.EcdsaSha256)
+            });
         }
     }
 }
