@@ -20,7 +20,7 @@ namespace ScottBrady91.SignInWithApple.Example
 
             services.AddAuthentication(options =>
                 {
-                    options.DefaultAuthenticateScheme = "cookie";
+                    options.DefaultScheme = "cookie";
                     options.DefaultChallengeScheme = "apple";
                 })
                 .AddCookie("cookie")
@@ -32,7 +32,7 @@ namespace ScottBrady91.SignInWithApple.Example
                     options.CallbackPath = "/signin-apple"; // corresponding to your redirect URI
 
                     options.ResponseType = "code id_token"; // hybrid flow due to lack of PKCE support
-                    options.SignInScheme = "cookie";
+                    options.ResponseMode = "form_post"; // form post due to prevent PII in the URL
                     options.DisableTelemetry = true;
 
                     options.Scope.Clear(); // apple does not support the profile scope
